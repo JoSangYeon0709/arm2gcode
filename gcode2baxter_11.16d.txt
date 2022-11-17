@@ -1,0 +1,440 @@
+import sys
+import matplotlib.pylab as plt
+import math
+import numpy as np
+import gif
+import openpyxl
+import copy
+'''
+import rospy
+import moveit_commander
+import geometry_msgs.msg
+import sys
+from tf.transformations import *
+'''
+
+pi= math.pi
+
+class Gcode2Baxter():
+    
+    gcode_arr = []
+    unit = 10**(-3)
+    RC=1
+    AC=0
+    zp_reset_x = 0
+    zp_reset_y = 0
+    zp_reset_z = 0
+    
+    '''
+    joint_state_topic = ['joint_states:=/robot/joint_states']
+    moveit_commander.roscpp_initialize(joint_state_topic)
+    rospy.init_node('moveit_test', anonymous=True)
+
+
+    robot = moveit_commander.RobotCommander()
+    group = moveit_commander.MoveGroupCommander("left_arm")
+
+
+    left_current_pose = group.get_current_pose(end_effector_link='left_gripper').pose
+    #right_current_pose = group.get_current_pose(end_effector_link='right_gripper').pose
+    
+    waypoints = []
+    waypoints.append(left_current_pose)
+    
+    wpose = group.get_current_pose().pose
+    self.g92(wpose.position.x, wpose.position.y, wpose.position.z)
+    #벡스터에서 왼팔을 초기자세로 옴겨놓고 그 좌표를 영점으로 설정
+    
+    wpose.position.x = 0
+    wpose.position.y = 0
+    wpose.position.z = 0
+    wpose.orientation.x = 0 
+    wpose.orientation.y = 0
+    wpose.orientation.z = 0
+    wpose.orientation.w = 0
+    #이거 위에 부분 없어도 코드 돌아갈거같은데?
+    
+    self.g17_18_19(1)
+    
+    
+    waypoints.append(copy.deepcopy(wpose))
+    
+    
+    여기에 실행부분 넣어줘야함
+    
+    
+    moveit_commander.roscpp_shutdown()
+    moveit_commander.os._exit(0)
+    
+
+        
+    '''
+    waypoints = []
+    waypoints.append([0,0,0])
+    wpose=[]
+    wpose_p_x=0
+    wpose_p_y=0
+    wpose_p_z=0
+    
+    
+    def __init__(self):
+        f = open("C:/Users/JSY/test_gcode.gcode", 'r', encoding='utf-8-sig')
+        gcode_lines = f.readlines()
+        f.close()
+
+        for line in gcode_lines:
+            line = line.strip()
+            if not line == "" :
+                gcode_par_val1 = line.split()
+                gcode_par_val2 = {}
+                for gg in gcode_par_val1:
+                    gcode_par_val2[gg[0]] =float(gg[1:])
+                Gcode2Baxter.gcode_arr.append(gcode_par_val2)
+                
+        self.g90()
+        self.g21()
+        self.gcode_classify()
+    
+    def pprcc(self,r,p_st=None,p_end=None,DoR_s="cw",stp=1,print_info=True,print_graph=False,xl=False):
+    
+        x_st=p_st[0]
+        y_st=p_st[1]
+        x_end=p_end[0]
+        y_end=p_end[1]
+        sing_ctrl = 1
+        DoR = DoR_s
+
+        if (DoR_s == "cw" or DoR_s == "CW"):
+            DoR_s = -1
+        elif (DoR_s == "ccw" or DoR_s == "CCW"):
+            DoR_s = 1
+
+        if x_st < x_end :
+            p2p_diff_x = 1
+        else:
+            p2p_diff_x = -1
+
+        if y_st < y_end :    
+            p2p_diff_y = 1
+        else:
+            p2p_diff_y = -1
+
+        DoR_calcul = p2p_diff_x * p2p_diff_y
+
+        if DoR_s != DoR_calcul:
+            x_st,y_st = p_end[0],p_end[1]
+            x_end,y_end = p_st[0],p_st[1]
+            sing_ctrl = -1
+
+        p2p_l = math.sqrt((x_end-x_st)**2 + (y_end-y_st)**2)
+
+        if p2p_l > r*2:
+            sys.exit("p2p_l: %f, r*2: %f \nThere is no circle that meets the conditions. \n Or r is minus."%(p2p_l,r*2))
+        elif p2p_l == r*2:
+            sys.exit("\nIt's half a circle.\nUse I,J,K instead of R in the G code.\nOr enter the midpoint of the semicircle as the endpoint(p_end)")
+
+        theta_1 = abs(math.asin((y_end-y_st)/p2p_l))
+        p2pline2cc_l = math.sqrt(r**2-(p2p_l/2)**2)
+        theta_2 = abs(math.asin(p2pline2cc_l/r))
+        theta_t = theta_1+theta_2
+
+        x_calcul = math.cos(theta_t)*r*p2p_diff_x*sing_ctrl
+        y_calcul = math.sin(theta_t)*r*p2p_diff_y*sing_ctrl
+        cc_x = x_st + x_calcul
+        cc_y = y_st + y_calcul
+
+        stp_r = DoR_s*math.radians(stp)/1000
+
+        if cc_y < p_st[1]:    
+            cc2pst_diff_y = 1
+        else:
+            cc2pst_diff_y = -1
+
+        if cc_y < p_end[1]:
+            cc2pend_diff_y = 1
+        else:
+            cc2pend_diff_y = -1
+
+        pst2cc_angle = math.acos((p_st[0]-cc_x)/r) * cc2pst_diff_y
+        pend2cc_angle = math.acos((p_end[0]-cc_x)/r) * cc2pend_diff_y
+
+        if DoR_s == -1:      
+            if pst2cc_angle < pend2cc_angle :
+                pend2cc_angle = (math.radians(360) - pend2cc_angle)*-1
+        elif DoR_s == 1:
+            if pst2cc_angle > pend2cc_angle :
+                pend2cc_angle = math.radians(360) + pend2cc_angle
+
+        c_x=[]
+        c_y=[]
+        c_xy=[]
+        
+        for theta in np.arange(pst2cc_angle,pend2cc_angle,stp_r):
+            p_xy=[]
+            p_x = cc_x + r * math.cos(theta)
+            p_y = cc_y + r * math.sin(theta)
+            p_xy.append(p_x)
+            p_xy.append(p_y)
+            
+            c_x.append(p_x)
+            c_y.append(p_y)
+            c_xy.append(p_xy)
+
+        x_st=p_st[0]
+        y_st=p_st[1]
+        x_end=p_end[0]
+        y_end=p_end[1]
+        c_x_len=len(c_x)
+
+        print('circle calculation completed ...maybe?')
+
+        """-------------------출력부분-------------------"""
+        if print_graph :
+
+            a = math.radians(0)
+            b = math.radians(360)
+            c = math.radians(0.1)
+            zz_x=[]
+            zz_y=[]
+
+            for theta in np.arange(a,b,c):
+                p_x = cc_x + r * math.cos(theta)
+                p_y = cc_y + r * math.sin(theta)
+                zz_x.append(p_x)
+                zz_y.append(p_y)
+
+            xy_axis=self.draw_c(cc_x,cc_y,r,zz_x,zz_y,x_st,y_st,x_end,y_end,DoR,print_info)
+            self.draw_c(cc_x,cc_y,r,c_x,c_y,x_st,y_st,x_end,y_end,DoR,print_info=False,circle_text="",xy_axis=xy_axis)    
+
+            frames = []
+
+            for i in range(0,c_x_len,5000):
+                c_xx=c_x[0:i]
+                c_yy=c_y[0:i]
+                plt.scatter(cc_x,cc_y,s=100,c="black",label="center")
+                plt.scatter(x_st,y_st,s=100,c="red",label="p_st")
+                plt.scatter(x_end,y_end,s=100,c="green",label="p_end")
+                plt.text(cc_x,cc_y-0.08,"("+str(round(cc_x,3))+","+ str(round(cc_y,3))+")", fontdict={'size': 14})
+                plt.text(x_st,y_st-0.08,"("+str(round(x_st,3))+","+ str(round(y_st,3))+")", fontdict={'size': 14})
+                plt.text(x_end,y_end-0.08,"("+str(round(x_end,3))+","+ str(round(y_end,3))+")", fontdict={'size': 14})
+                plt.axis(xy_axis)
+
+                frame = self.make_gif(c_xx,c_yy,cc_x,cc_y,r,xy_axis=xy_axis)
+                frames.append(frame)
+
+            gif_dura = len(frames)/300
+            gif.save(frames, 'circle.gif', duration=gif_dura)
+
+        if xl == True:
+            self.save2xl(cc_x,cc_y,r,c_x,c_y,x_st,y_st,x_end,y_end,DoR,p2p_l,c_x_len)
+
+        if print_graph == False:
+            return c_xy
+
+    @gif.frame
+    def make_gif(self,c_xx,c_yy,cc_x,cc_y,r,xy_axis=None):
+        plt.axis(xy_axis)
+        plt.plot(c_xx,c_yy)
+
+    def draw_c(self,cc_x,cc_y, r, c_x, c_y ,x_st, y_st, x_end, y_end,DoR="",print_info=False,circle_text="circle ",xy_axis=None):   
+        plt.figure(figsize=(10,10))
+        plt.plot(c_x,c_y)
+        plt.grid()
+        plt.scatter(cc_x,cc_y,s=100,c="black",label=DoR)
+        plt.scatter(cc_x,cc_y,s=100,c="black",label="center")
+        plt.scatter(x_st,y_st,s=100,c="red",label="p_st")
+        plt.scatter(x_end,y_end,s=100,c="green",label="p_end")
+        plt.text(cc_x,cc_y-0.08,"("+str(round(cc_x,3))+","+ str(round(cc_y,3))+")", fontdict={'size': 14})
+        plt.text(x_st,y_st-0.08,"("+str(round(x_st,3))+","+ str(round(y_st,3))+")", fontdict={'size': 14})
+        plt.text(x_end,y_end-0.08,"("+str(round(x_end,3))+","+ str(round(y_end,3))+")", fontdict={'size': 14})
+        plt.legend()
+        plt.xlabel('x-axis')
+        plt.ylabel('y-axis')
+
+        if print_info== True:
+            info_text = "\nradius: " + str(r)+"\np_st: ("+str(x_st)+", "+str(y_st)+") "+"\np_end: ("+str(x_end)+", "+str(y_end)+")"+"\ncircle center: ("+str(cc_x)+", "+str(cc_y)+")"+"\ndirection of rotation: "+DoR+"\n\n"
+            plt.title(info_text,loc='left', pad=20)
+            plt.title('\n'+circle_text+' equation graph')    
+        else:
+            info_text= '\n '+ circle_text +'equation graph'
+            plt.title(info_text)
+
+        if xy_axis :
+            plt.axis(xy_axis)
+        else:
+            return plt.axis('square')
+        plt.show()
+        plt.close()
+
+    def save2xl(self,cc_x,cc_y, r, c_x, c_y ,x_st, y_st, x_end, y_end,DoR,p2p_l,c_x_len):
+        wb = openpyxl.Workbook()
+        sheet = wb.active
+        sheet.cell(row=1,column=1).value="방향"
+        sheet.cell(row=2,column=1).value="점 개수"
+        sheet.cell(row=3,column=1).value="시작점 x,y"
+        sheet.cell(row=4,column=1).value="끝점 x,y"
+        sheet.cell(row=5,column=1).value="원 중심 x,y"
+        sheet.cell(row=6,column=1).value="반지름"
+        sheet.cell(row=7,column=1).value="점간 거리"
+
+        sheet.cell(row=1,column=2).value=DoR
+        sheet.cell(row=2,column=2).value=c_x_len
+        sheet.cell(row=3,column=2).value=x_st
+        sheet.cell(row=4,column=2).value=x_end
+        sheet.cell(row=5,column=2).value=cc_x
+        sheet.cell(row=6,column=2).value=r
+        sheet.cell(row=7,column=2).value=p2p_l
+
+        sheet.cell(row=3,column=3).value=y_st
+        sheet.cell(row=4,column=3).value=y_end
+        sheet.cell(row=5,column=3).value=cc_y
+
+
+        sheet.cell(row=1,column=6).value="circle_x"
+        sheet.cell(row=1,column=7).value="circle_y"
+
+        for i in range(0,c_x_len):
+            sheet.cell(row=i+2,column=6).value = c_x[i]
+            sheet.cell(row=i+2,column=7).value = c_y[i]
+        wb.save('circle_xy.xlsx')
+
+
+    def gcode_classify(self):
+        for line in Gcode2Baxter.gcode_arr:
+            if line.get('M') == None:
+                gcode_fst_str= line['G']
+                x=line.get('X')
+                y=line.get('Y')
+                z=line.get('Z')
+                if x == None:
+                    x= 0
+                if y == None:
+                    y= 0
+                if z == None:
+                    z= 0
+                    
+                if gcode_fst_str == 1:   #여기 숫자가 G 뒤에 숫자임
+
+                    self.g01(x,y,z)     
+                if gcode_fst_str == 2:   
+                    self.g02()
+                if gcode_fst_str == 3:   
+                    self.g03()
+                if gcode_fst_str == 4:   
+                    #self.g04()
+                    print('g04')
+                if gcode_fst_str == 17:   
+                    self.g17_18_19(1)
+                if gcode_fst_str == 18:   
+                    self.g17_18_19(2)
+                if gcode_fst_str == 19:   
+                    self.g17_18_19(3)
+                if gcode_fst_str == 20:   
+                    self.g20()
+                if gcode_fst_str == 21:   
+                    self.g21()
+                if gcode_fst_str == 90:   
+                    self.g90()
+                if gcode_fst_str == 91:   
+                    self.g91()
+                if gcode_fst_str == 92:   
+                    self.g92(x,y,z)
+                if gcode_fst_str == 77:   
+                    self.g92(x,y,z)
+                    
+                x,y,z=0,0,0
+    
+
+    def gcode_prvs_crdnt(self): # 직전 gcode 좌표
+        print('aa')
+        
+    def gcode_moveit(self):
+        Gcode2Baxter.waypoints.append(copy.deepcopy(Gcode2Baxter.wpose))
+        
+        Gcode2Baxter.wpose=[]
+        
+    def g01(self,x,y,z): # 직선
+        '''
+        Gcode2Baxter.wpose.position.x = (Gcode2Baxter.zp_reset_x*Gcode2Baxter.AC) + (Gcode2Baxter.wpose.position.x * Gcode2Baxter.RC)+(x*Gcode2Baxter.unit)
+        Gcode2Baxter.wpose.position.y = (Gcode2Baxter.zp_reset_y*Gcode2Baxter.AC) + (Gcode2Baxter.wpose.position.y * Gcode2Baxter.RC)+(y*Gcode2Baxter.unit)
+        Gcode2Baxter.wpose.position.z = (Gcode2Baxter.zp_reset_z*Gcode2Baxter.AC) + (Gcode2Baxter.wpose.position.z * Gcode2Baxter.RC)+(z*Gcode2Baxter.unit)
+        '''
+        Gcode2Baxter.wpose_p_x = (Gcode2Baxter.zp_reset_x*Gcode2Baxter.AC) + (Gcode2Baxter.wpose_p_x * Gcode2Baxter.RC)+(x*Gcode2Baxter.unit)
+        Gcode2Baxter.wpose_p_y = (Gcode2Baxter.zp_reset_y*Gcode2Baxter.AC) + (Gcode2Baxter.wpose_p_y * Gcode2Baxter.RC)+(y*Gcode2Baxter.unit)
+        Gcode2Baxter.wpose_p_z = (Gcode2Baxter.zp_reset_z*Gcode2Baxter.AC) + (Gcode2Baxter.wpose_p_z * Gcode2Baxter.RC)+(z*Gcode2Baxter.unit)
+
+        Gcode2Baxter.wpose.append(Gcode2Baxter.wpose_p_x)
+        Gcode2Baxter.wpose.append(Gcode2Baxter.wpose_p_y)
+        Gcode2Baxter.wpose.append(Gcode2Baxter.wpose_p_z)
+
+        self.gcode_moveit()
+    def g02(self): # CW
+        '''여기에서는 gcode_moveit을 엄청 많이 불러야하는데 g02넣으면 그거 읽고 pprcc 계산 하고 그 계산 점마다 g01을 불러야함'''
+        print('g02')
+        Gcode2Baxter.wpose.position.x = Gcode2Baxter.zp_reset_x + (Gcode2Baxter.wpose.position.x * Gcode2Baxter.RC)+(0.15)
+        
+    def g03(self): # CCW
+        print('a')
+    def g04(self,sec_selete,num): # 일시정지 X 초 U 초 P 마이크로 0.001초
+        if sec_selete == 'P':
+            sleep(num*10-6)
+        elif sec_selete == 'X' or 'U':
+            sleep(num)
+    
+    def g17_18_19(self,num): # XY평면 X,Y I,J   num = 1 -> xy, num = 2 -> xz, num = 3 -> yz
+        I,J,K=0,0,0
+        if num == 2:
+            J,K=1,1
+        if num == 3:
+            J=1
+        q_orig = np.array([0,0,0,1])        
+        q_rot = quaternion_from_euler ( pi/2*I, pi/2*J, pi/2*K ) 
+        q_new = quaternion_multiply ( q_rot , q_orig )
+        Gcode2Baxter.wpose.orientation.x = q_new[0]
+        Gcode2Baxter.wpose.orientation.y = q_new[1]
+        Gcode2Baxter.wpose.orientation.z = q_new[2]
+        Gcode2Baxter.wpose.orientation.w = q_new[3]
+        
+    def g20(self): # 단위 inch
+        Gcode2Baxter.unit= 25.4 * 10**(-3)
+        
+    def g21(self): # 단위 mm 기본
+        Gcode2Baxter.unit= 10**(-3)
+        
+    def g90(self): # 절대
+        Gcode2Baxter.RC=0
+        Gcode2Baxter.AC=1
+        
+    def g91(self): # 상대
+        Gcode2Baxter.RC=1
+        Gcode2Baxter.AC=0
+        
+    def g92(self,x,y,z): # 영점 리셋
+        Gcode2Baxter.zp_reset_x = x*Gcode2Baxter.unit
+        Gcode2Baxter.zp_reset_y = y*Gcode2Baxter.unit
+        Gcode2Baxter.zp_reset_z = z*Gcode2Baxter.unit
+    
+    
+    '''-------------------'''
+    def g77(self): # 단위 m임  ppt로 G코드를 어떻게 바꾸는지 예시 작업용
+        Gcode2Baxter.unit= 1
+    '''-------------------'''
+
+'''       
+if __name__ == '__main__':
+    try:
+        moveit_test()
+    except rospy.ROSInterruptException:
+        pass    
+''' 
+
+kkkk = Gcode2Baxter()
+    
+print(kkkk.gcode_arr)
+print('----')
+
+
+print('----')
+print(kkkk.waypoints)
+
+#pprcc(2,[5,2],[4,3],"cw")
